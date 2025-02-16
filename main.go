@@ -574,6 +574,8 @@ func WsHandler(c *gin.Context, id string) error {
 		}
 
 		switch wsMsg.Type {
+		case "leave":
+			break
 		case "join":
 			err := HandleJoin(wsMsg, newClient)
 			if err != nil {
