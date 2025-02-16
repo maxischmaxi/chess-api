@@ -14,12 +14,6 @@ import (
 	"github.com/notnil/chess"
 )
 
-type OutcomeMessage struct {
-	GameID  string `json:"gameId"`
-	Outcome string `json:"outcome"`
-	Winner  string `json:"winner"`
-}
-
 type MoveMessage struct {
 	GameID string `json:"gameId"`
 	Color  string `json:"color"`
@@ -28,7 +22,7 @@ type MoveMessage struct {
 
 type MoveAnswer struct {
 	GameID string `json:"gameId"`
-	Fen    string `json:"fen"`
+	Move   string `json:"move"`
 }
 
 type JoinMessage struct {
@@ -47,11 +41,6 @@ type WebsocketMessage struct {
 
 type HelloMessage struct {
 	ID string `json:"id"`
-}
-
-type PossibleMovesMessage struct {
-	GameID string   `json:"gameId"`
-	Moves  []string `json:"moves"`
 }
 
 type Client struct {
@@ -73,12 +62,6 @@ type StoredGame struct {
 	BlackPlayerId string `json:"blackPlayerId"`
 }
 
-type CapturedPiecesMessage struct {
-	GameID string   `json:"gameId"`
-	White  []string `json:"white"`
-	Black  []string `json:"black"`
-}
-
 type CreateGameRequest struct {
 	Player1        string `json:"player1"`
 	Player2        string `json:"player2"`
@@ -91,233 +74,10 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func GenerateCapturedPiecesMessage(game *Game, gameId string) ([]byte, error) {
-	whiteStart := map[chess.PieceType]int{
-		chess.Pawn:   8,
-		chess.Rook:   2,
-		chess.Knight: 2,
-		chess.Bishop: 2,
-		chess.Queen:  1,
-		chess.King:   1,
-	}
-	blackStart := map[chess.PieceType]int{
-		chess.Pawn:   8,
-		chess.Rook:   2,
-		chess.Knight: 2,
-		chess.Bishop: 2,
-		chess.Queen:  1,
-		chess.King:   1,
-	}
-	whiteCurrent := map[chess.PieceType]int{
-		chess.Pawn:   0,
-		chess.Rook:   0,
-		chess.Knight: 0,
-		chess.Bishop: 0,
-		chess.Queen:  0,
-		chess.King:   0,
-	}
-	blackCurrent := map[chess.PieceType]int{
-		chess.Pawn:   0,
-		chess.Rook:   0,
-		chess.Knight: 0,
-		chess.Bishop: 0,
-		chess.Queen:  0,
-		chess.King:   0,
-	}
-
-	board := game.Game.Position().Board()
-
-	// Durch alle Felder gehen
-	for sq := chess.A1; sq <= chess.H8; sq++ {
-		piece := board.Piece(sq)
-		if piece != chess.NoPiece {
-			if piece.Color() == chess.White {
-				whiteCurrent[piece.Type()]++
-			} else {
-				blackCurrent[piece.Type()]++
-			}
-		}
-	}
-
-	whiteCaptured := map[chess.PieceType]int{}
-	blackCaptured := map[chess.PieceType]int{}
-
-	for pt, startCount := range whiteStart {
-		whiteCaptured[pt] = startCount - whiteCurrent[pt]
-	}
-	for pt, startCount := range blackStart {
-		blackCaptured[pt] = startCount - blackCurrent[pt]
-	}
-
-	whitePieces := make([]string, 0)
-	blackPieces := make([]string, 0)
-
-	for pt, count := range whiteCaptured {
-		for i := 0; i < count; i++ {
-			whitePieces = append(whitePieces, chess.NewPiece(pt, chess.White).String())
-		}
-	}
-
-	for pt, count := range blackCaptured {
-		for i := 0; i < count; i++ {
-			blackPieces = append(blackPieces, chess.NewPiece(pt, chess.Black).String())
-		}
-	}
-
-	capturedPiecesMsg := CapturedPiecesMessage{
-		GameID: gameId,
-		White:  whitePieces,
-		Black:  blackPieces,
-	}
-
-	data, err := json.Marshal(capturedPiecesMsg)
-	if err != nil {
-		return nil, err
-	}
-
-	msg := WebsocketMessage{
-		Type:    "capturedPieces",
-		Payload: string(data),
-	}
-
-	data, err = json.Marshal(msg)
-	if err != nil {
-		return nil, err
-	}
-
-	return data, nil
-}
-
-func GenerateOutcomeMessage(game *Game, gameId string) ([]byte, error) {
-	outcome := game.Game.Outcome()
-	method := game.Game.Method()
-
-	outcomeMsg := OutcomeMessage{
-		GameID:  gameId,
-		Outcome: "",
-		Winner:  "",
-	}
-
-	if outcome == chess.WhiteWon {
-		outcomeMsg.Outcome = "white won"
-		outcomeMsg.Winner = "w"
-	}
-	if outcome == chess.BlackWon {
-		outcomeMsg.Outcome = "black won"
-		outcomeMsg.Winner = "b"
-	}
-	if outcome == chess.Draw {
-		outcomeMsg.Outcome = "draw"
-	}
-	if method == chess.Checkmate {
-		if outcomeMsg.Outcome == "" {
-			outcomeMsg.Outcome = "checkmate"
-		} else {
-			outcomeMsg.Outcome += " checkmate"
-		}
-	}
-
-	data, err := json.Marshal(outcomeMsg)
-	if err != nil {
-		return nil, err
-	}
-
-	msg := WebsocketMessage{
-		Type:    "outcome",
-		Payload: string(data),
-	}
-
-	data, err = json.Marshal(msg)
-	if err != nil {
-		return nil, err
-	}
-
-	return data, nil
-}
-
-func GeneratePossibleMovesMessage(game *Game, gameId string, clientId string) ([]byte, error) {
-	possibleMoves := make([]string, 0)
-	moves := game.Game.ValidMoves()
-
-	if game.Game.Position().Turn() == chess.White && game.WhitePlayerId != clientId {
-		possibleMovesMsg := PossibleMovesMessage{
-			GameID: gameId,
-			Moves:  possibleMoves,
-		}
-
-		data, err := json.Marshal(possibleMovesMsg)
-		if err != nil {
-			return nil, err
-		}
-
-		msgPossibleMoves := WebsocketMessage{
-			Type:    "possibleMoves",
-			Payload: string(data),
-		}
-
-		possibleMoveData, err := json.Marshal(msgPossibleMoves)
-		if err != nil {
-			return nil, err
-		}
-
-		return possibleMoveData, nil
-	}
-
-	if game.Game.Position().Turn() == chess.Black && game.BlackPlayerId != clientId {
-		possibleMovesMsg := PossibleMovesMessage{
-			GameID: gameId,
-			Moves:  possibleMoves,
-		}
-
-		data, err := json.Marshal(possibleMovesMsg)
-		if err != nil {
-			return nil, err
-		}
-
-		msgPossibleMoves := WebsocketMessage{
-			Type:    "possibleMoves",
-			Payload: string(data),
-		}
-
-		possibleMoveData, err := json.Marshal(msgPossibleMoves)
-		if err != nil {
-			return nil, err
-		}
-
-		return possibleMoveData, nil
-	}
-
-	for _, move := range moves {
-		possibleMoves = append(possibleMoves, move.String())
-	}
-
-	possibleMovesMsg := PossibleMovesMessage{
-		GameID: gameId,
-		Moves:  possibleMoves,
-	}
-
-	data, err := json.Marshal(possibleMovesMsg)
-	if err != nil {
-		return nil, err
-	}
-
-	msgPossibleMoves := WebsocketMessage{
-		Type:    "possibleMoves",
-		Payload: string(data),
-	}
-
-	possibleMoveData, err := json.Marshal(msgPossibleMoves)
-	if err != nil {
-		return nil, err
-	}
-
-	return possibleMoveData, nil
-}
-
 func GenerateMoveAnswerMessage(game *Game, move MoveMessage) ([]byte, error) {
 	answer := MoveAnswer{
 		GameID: move.GameID,
-		Fen:    game.Game.Position().String(),
+		Move:   move.Move,
 	}
 
 	data, err := json.Marshal(answer)
@@ -353,9 +113,23 @@ func HandleMove(
 		return errors.New("Game not found")
 	}
 
-	err = game.Game.MoveStr(move.Move)
-	if err != nil {
-		return err
+	moves := game.Game.ValidMoves()
+	moved := false
+
+	for _, m := range moves {
+		if m.String() == move.Move {
+			err := game.Game.Move(m)
+			if err != nil {
+				return err
+			}
+
+			moved = true
+			break
+		}
+	}
+
+	if !moved {
+		return errors.New("Invalid move")
 	}
 
 	err = SaveGames()
@@ -363,59 +137,31 @@ func HandleMove(
 		return err
 	}
 
-	if game.Game.Outcome() != chess.NoOutcome {
-		moveAnswer, err := GenerateMoveAnswerMessage(game, move)
-		if err != nil {
-			return err
-		}
-
-		err = client.Conn.WriteMessage(websocket.TextMessage, moveAnswer)
-		if err != nil {
-			return err
-		}
-
-		data, err := GenerateOutcomeMessage(game, move.GameID)
-		if err != nil {
-			return err
-		}
-
-		err = client.Conn.WriteMessage(websocket.TextMessage, data)
-		if err != nil {
-			return err
-		}
-
-		return nil
+	opponent := ""
+	if game.WhitePlayerId == client.ID {
+		opponent = game.BlackPlayerId
+	} else {
+		opponent = game.WhitePlayerId
 	}
 
-	moveAnswer, err := GenerateMoveAnswerMessage(game, move)
-	if err != nil {
-		return err
-	}
+	switch opponent {
+	case "":
+	case "ai":
+		break
+	default:
+		for _, client := range connectedClients {
+			if client.ID == opponent {
+				data, err := GenerateMoveAnswerMessage(game, move)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
 
-	possibleMoveData, err := GeneratePossibleMovesMessage(game, move.GameID, client.ID)
-	if err != nil {
-		return err
-	}
-
-	capturedPiecesData, err := GenerateCapturedPiecesMessage(game, move.GameID)
-	if err != nil {
-		return err
-	}
-
-	for _, client := range connectedClients {
-		err = client.Conn.WriteMessage(websocket.TextMessage, moveAnswer)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-		err = client.Conn.WriteMessage(websocket.TextMessage, possibleMoveData)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-		err = client.Conn.WriteMessage(websocket.TextMessage, capturedPiecesData)
-		if err != nil {
-			fmt.Println(err)
+				err = client.Conn.WriteMessage(websocket.TextMessage, data)
+				if err != nil {
+					continue
+				}
+			}
 		}
 	}
 
@@ -481,36 +227,6 @@ func HandleJoin(
 		return err
 	}
 
-	data, err = GeneratePossibleMovesMessage(game, join.GameID, newClient.ID)
-	if err != nil {
-		return err
-	}
-
-	err = newClient.Conn.WriteMessage(websocket.TextMessage, data)
-	if err != nil {
-		return err
-	}
-
-	outcome, err := GenerateOutcomeMessage(game, join.GameID)
-	if err != nil {
-		return err
-	}
-
-	err = newClient.Conn.WriteMessage(websocket.TextMessage, outcome)
-	if err != nil {
-		return err
-	}
-
-	capturedPiecesData, err := GenerateCapturedPiecesMessage(game, join.GameID)
-	if err != nil {
-		return err
-	}
-
-	err = newClient.Conn.WriteMessage(websocket.TextMessage, capturedPiecesData)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -564,13 +280,13 @@ func WsHandler(c *gin.Context, id string) error {
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			continue
+			break
 		}
 
 		var wsMsg WebsocketMessage
 		err = json.Unmarshal(msg, &wsMsg)
 		if err != nil {
-			continue
+			break
 		}
 
 		switch wsMsg.Type {
@@ -591,6 +307,8 @@ func WsHandler(c *gin.Context, id string) error {
 			break
 		}
 	}
+
+	return nil
 }
 
 func SaveGames() error {
@@ -632,7 +350,7 @@ func LoadGames() error {
 
 	games = make(map[string]*Game)
 	for id, storedGame := range storedGames {
-		game := chess.NewGame(chess.UseNotation(chess.UCINotation{}))
+		game := chess.NewGame(chess.UseNotation(chess.LongAlgebraicNotation{}))
 
 		if err := game.UnmarshalText([]byte(storedGame.PGNStr)); err != nil {
 			return err
@@ -710,7 +428,7 @@ func main() {
 			return
 		}
 
-		game := chess.NewGame(fen, chess.UseNotation(chess.UCINotation{}))
+		game := chess.NewGame(fen, chess.UseNotation(chess.LongAlgebraicNotation{}))
 
 		newGame := &Game{
 			Game:          game,
